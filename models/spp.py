@@ -16,17 +16,19 @@ class SPP:
         """
         mp = TrModel.update_mp(mp)  # update dependent parameters
 
-        abar = SPP.abar_max  # pick a large upper bound for the possible scrap age of a car
+        abar = SPP.abar_max-1  # pick a large upper bound for the possible scrap age of a car
         abar_spp = [[0] * mp['ncartypes'] for _ in range(mp['ntypes'])]
+
+        p_spp = [[None for _ in range(mp['ncartypes'])] for _ in range(mp['ntypes'])]
+        w_spp = [[None for _ in range(mp['ncartypes'])] for _ in range(mp['ntypes'])]
 
         for car in range(mp['ncartypes']):
             for t in range(mp['ntypes']):
                 v0 = np.zeros(abar)
-
                 if SPP.solmeth[0] == 'poly':  # poly algorithm - start with successive approximations
-                    w, dr = DPSolver.poly(lambda V: SPP.bellman_spp(mp, V, t, car), v0, mp, mp['bet'])
-                elif SPP.solmeth[0] == 'policy':  # policy iteration solution
-                    w, dr = DPSolver.policy(lambda V: SPP.bellman_spp(mp, V, t, car), v0, mp)
+                    w, _, dr, _ = DPSolver.poly(lambda V: SPP.bellman_spp(V,mp, t, car), v0,  None,mp['bet'])
+                #elif SPP.solmeth[0] == 'policy':  # policy iteration solution
+                #    w, dr = DPSolver.policy(lambda V: SPP.bellman_spp(mp, V, t, car), mp, v0)
                 else:
                     raise ValueError('spp.solmeth must be either "poly" or "policy".')
 
@@ -42,40 +44,43 @@ class SPP:
                 if SPP.verbosity > 0:
                     print(f'solved spp for cartype {car} consumer type={t} abar_spp={abar_spp[t][car]}')
 
+        print(abar_spp)
         return abar_spp, p_spp, w_spp
 
     @staticmethod
-    def bellman_spp(mp, V, t, car):
+    def bellman_spp(V,mp, t, car):
         """
         bellman_spp: Bellman equation for social planner
         """
         abar = len(V) - 1
         a = np.arange(abar)
-        ia = a + 1
+        ia = a
 
+        #print(V)
         # accident probabilities and utility
         apr = TrModel.acc_prob_j(mp, np.arange(abar + 1), car, abar)
         urep = TrModel.u_car(mp, 0, t, car) - mp['mum'][t] * (mp['pnew'][car] - mp['pscrap'][car])
         ukeep = TrModel.u_car(mp, a, t, car)
         vrep = urep + mp['bet'] * ((1 - apr[0]) * V[1] + apr[0] * V[-1])
+        print(V)
         vkeep = ukeep + mp['bet'] * ((1 - apr[ia]) * V[1:] + apr[ia] * V[-1])
 
-        V[:-1] = np.maximum(vrep, vkeep)
-        V[-1] = vrep
+        V_new = V.copy()  # Create a copy to modify
+        V_new[:-1] = np.maximum(vrep, vkeep)
+        V_new[-1] = vrep
 
-        if nargout > 1:  # Policy function (indicator for replacement)
-            P = np.hstack((vrep > vkeep, 1))  # always replace oldest car
+        # Policy function (indicator for replacement)
+        P = np.hstack((vrep > vkeep, 1))  # always replace oldest car
 
-        if nargout > 2:  # Frechet derivative of bellman operator (needed for dpsolver.policy and dpsolver.poly)
-            tpm = diags((1 - P[ia]) * (1 - apr[ia]), 1).toarray()  # next period car age one year older if not replaced and not in accident
-            tpm[:, -1] += P * apr[0] + (1 - P) * apr  # next period car is clunker if replaced and in accident or not replace car and in accident
-            tpm[:, 1] += P * (1 - apr[0])  # next period car is one year old if replaced and not in accident
-            dV = mp['bet'] * tpm
+        # Frechet derivative of bellman operator (needed for dpsolver.policy and dpsolver.poly)
+        tpm = diags((1 - P[ia]) * (1 - apr[ia]), 1).toarray()  # next period car age one year older if not replaced and not in accident
+        tpm[:, -1] += P * apr[0] + (1 - P) * apr  # next period car is clunker if replaced and in accident or not replace car and in accident
+        tpm[:, 1] += P * (1 - apr[0])  # next period car is one year old if replaced and not in accident
+        dV = mp['bet'] * tpm
 
-        if nargout > 3:  # expect utility given policy rule (needed for dpsolver.policy)
-            Eu = P * urep + (1 - P) * np.hstack((ukeep, urep))
-
-        return V, P, dV, Eu
+        # Expect utility given policy rule (needed for dpsolver.policy)
+        Eu = P * urep + (1 - P) * np.hstack((ukeep, urep))
+        return V_new, P, dV, Eu
 
     @staticmethod
     def hom_prices(mp, abar, tp=None, car=None):

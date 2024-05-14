@@ -35,9 +35,10 @@ class DPSolver:
             'check_deriv_tol': 1e-6  # Absolute tolerance before for difference between analytical and numerical derivatives of bellman operator
         }
 
-        if apopt is not None:
-            for key, value in apopt.items():
-                ap[key] = value
+        #if apopt is not None:
+        #    print(apopt)
+        #    for key, value in apopt.items():
+        #        ap[key] = value
 
         return ap
 
@@ -74,7 +75,6 @@ class DPSolver:
 
         start_time = time.time()
         iter = []
-
         for k in range(ap['max_fxpiter']):  # poly-algorithm loop (switching between SA and N-K and back)
 
             # SECTION A: CONTRACTION ITERATIONS
@@ -105,7 +105,7 @@ class DPSolver:
                     break  # out of poly-algorithm loop with no convergence
 
         V = V0
-        return V, iter
+        return V, P, dV, nk_iter
 
     @staticmethod
     def sa(bellman, V0, ap=None, bet=None):
@@ -132,7 +132,6 @@ class DPSolver:
         # Set default settings for fixed point algorithm, for ap's not given in input
         # (overwrites defaults if ap is given as input)
         ap = DPSolver.setup(ap)
-
         start_time = time.time()
         iter = {
             'tol': np.nan * np.ones(ap['sa_max']),
@@ -141,7 +140,7 @@ class DPSolver:
         }
 
         for i in range(ap['sa_max']):
-            V = bellman(V0)
+            V,_,_,_ = bellman(V0)
             iter['tol'][i] = np.max(np.abs(V - V0))
             iter['rtol'][i] = iter['tol'][i] / iter['tol'][max(i-1, 0)]
             V0 = V  # accept SA step and prepare for new iteration
@@ -272,17 +271,17 @@ class DPSolver:
         m = len(V0)
         for i in range(ap['pi_max']):  # do at most pi_max N-K steps
             # Do N-K step
-            V1, P, dV = bellman(V0)  # also return value and policy function
+            V1, P, dV, _ = bellman(V0)  # also return value and policy function
             if ap['check_deriv']:
                 df_nm, df_an, df_err = DPSolver.check_deriv(bellman, V0, ap)
                 if np.max(np.abs(df_err)) > ap['check_deriv_tol']:
                     print('Warning: Max abs difference between analytical and numerical derivatives of bellman operator is larger than tolerance')
 
-            F = speye(m) - dV  # using dV from last call to bellman
-            V = V0 - solve(F.toarray(), V0 - V1)  # NK-iteration
+            F = np.eye(m) - dV  # using dV from last call to bellman
+            V = V0 - solve(F, V0 - V1)  # NK-iteration
 
             # do additional SA iteration for stability and accurate measure of error bound
-            V0 = bellman(V)
+            V0, _, _, _ = bellman(V)
 
             # tolerance 
             iter['tol'][i] = np.max(np.abs(V - V0))

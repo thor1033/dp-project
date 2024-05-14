@@ -25,6 +25,7 @@ class SetParams:
         mp['sigma_s'] = 0.5
         mp['acc_0'] = [-5.0]  # = log(0.01), i.e. 1% accidents per year
         mp['acc_a'] = [0.0]
+        mp['acc_even'] = [0]
 
         mp['mum'] = [0.1, 0.3]  # marginal utility of money
         mp['psych_transcost'] = [0]

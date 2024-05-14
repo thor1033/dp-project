@@ -1,8 +1,8 @@
-
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from models.tr_model import solve
+from models.tr_model import TrModel
+from models.equilibrium import Equilibrium
 
 def agg_holdings(mp, s, sol):
     """

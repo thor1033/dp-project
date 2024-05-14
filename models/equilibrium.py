@@ -40,6 +40,8 @@ class Equilibrium:
                     print('Equilibrium solution found in attempt', attempt, ': maximum absolute excess excess['is']', np.max(np.abs(sol['ed'])))
                 break
 
+        return p0
+
     @staticmethod
     def price_init(mp, s):
         """
@@ -51,6 +53,7 @@ class Equilibrium:
 
         # Use social planner solution as starting values for p0
         for j in range(mp['ncartypes']):
+            print(abar_spp)
             abar_j_spp, tau_j = max((abar, idx) for idx, abar in enumerate(abar_spp[:, j]))
             if abar_j_spp > mp['abar_j0'][j]:
                 print(f'WARNING: Social planner solution not consistent with mp.abar_j0: abar_j_spp={abar_j_spp} > mp.abar_j0={mp["abar_j0"][j]} \nTruncating price vector - consider increasing mp.abar_j0')

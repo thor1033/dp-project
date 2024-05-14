@@ -1,34 +1,48 @@
 import numpy as np
 from scipy.sparse import coo_matrix, csr_matrix
+from collections import defaultdict
 
 class TrModel:
 
     @staticmethod
     def setparams(mp0=None):
+        """
+        Standard parameters of the model
+        SYNTAX :
+          mp = trmodel.setparams()       # set all parameters to zeros
+          mp = trmodel.setparams(mp0)    # update parameters with parameters in mp0
+
+        NOTE: When adding new parameters to trmodel, they must be added here 
+        DO NOT ENTER VALUES OF PARAMETERS - JUST ZEROS (or values that turn off the parameter)
+        See also setparams.default to get default parameters
+        """
         mp = {}
 
         # ******************************************
         # switches
         # ******************************************
-        mp['es'] = 1
-        mp['fixprices'] = 0
-        mp['ll_scrap'] = True
+        mp['es'] = 1  # use model with endogenous scrapage if 1 
+        mp['fixprices'] = 0  # set to zero, to compute model solution at a given set of prices without solving for equilibrium 
+        mp['ll_scrap'] = True  # add scrap decisions to likelihood if true
 
         # ******************************************
         # misc. parameters
         # ******************************************
-        mp['dk_population'] = 2.5
+        mp['dk_population'] = 2.5  # number of Danish households in millions
 
         # ******************************************
         # consumer types and car types
         # ******************************************
-        mp['lbl_cartypes'] = ['Luxury', 'Normal']
-        mp['abar_j0'] = [25, 25]
-        mp['ncartypes'] = len(mp['abar_j0'])
+        # Some parameters below are consumer type specific (in rows) and car type specific (in columns) 
+        # If number of entries is smaller than ntypes, last entry is repeated)
 
-        mp['lbl_types'] = ['Rich', 'Poor']
-        mp['tw'] = [0.5, 0.5]
-        mp['ntypes'] = len(mp['tw'])
+        mp['lbl_cartypes'] = ['Luxury', 'Normal']  # car type labels (for plotting)
+        mp['abar_j0'] = [25, 25]  # car specific value of abar 
+        mp['ncartypes'] = len(mp['abar_j0'])  # number of car types 
+
+        mp['lbl_types'] = ['Rich', 'Poor']  # consumer type labels (for plotting)
+        mp['tw'] = [0.5, 0.5]  # distribution of the types in the population (tw vector must sum to 1)
+        mp['ntypes'] = len(mp['tw'])  # number of types of consumers
 
         # ******************************************
         # discount factor (beta)
@@ -37,6 +51,7 @@ class TrModel:
 
         # ******************************************
         # accident parameters (alpha)
+        # ap=1./(1+exp(-apv)), where apv = mp.acc_0{ct} + mp.acc_a{ct}.*a + mp.acc_even{ct}*(1-mod(a,2));     
         # ******************************************
         mp['acc_0'] = [-10]
         mp['acc_a'] = [0]
@@ -45,68 +60,96 @@ class TrModel:
         # ******************************************
         # parameters of GEV distribution (theta)
         # ******************************************
-        mp['sigma'] = 1
-        mp['sigma_s'] = 1
+        mp['sigma'] = 1  # scale value of extreme value taste shocks in consumer problem at top level of the choice tree
+        mp['sigma_s'] = 1  # the extreme value scale parameter for the idiosyncratic extreme value shocks affecting the sale vs scrappage decision
 
         # ******************************************
         # utility parameters (theta)
         # ******************************************
-        mp['mum'] = [1]
-        mp['phi'] = [0.01]
+        mp['mum'] = [1]  # marginal utility of money
 
-        mp['transcost'] = 0
-        mp['ptranscost'] = 0
-        mp['psych_transcost'] = [0]
-        mp['psych_transcost_nocar'] = [0]
-        mp['nocarsc'] = 0
-        mp['tc_sale'] = 0
-        mp['tc_sale_age'] = 0
-        mp['ptc_sale'] = 0
-        mp['tc_sale_even'] = 0
+        mp['phi'] = [0.01]  # scale of driving utility (set low to exclude driving)
 
-        mp['u_0'] = [0]
-        mp['u_a'] = [0]
-        mp['u_a_sq'] = [0]
-        mp['convexutility'] = 0
+        # transactions costs parameters 
+        mp['transcost'] = 0  # fixed transaction cost for buying cars
+        mp['ptranscost'] = 0  # proportional component of transaction costs, as a fraction of the price of the car the consumer buys
+        mp['psych_transcost'] = [0]  # utility cost of buying a car
+        mp['psych_transcost_nocar'] = [0]  # additional utility cost of buying a car, when not owning a car
+        mp['nocarsc'] = 0  # additional search cost incurred by a consumer who has no car
+        mp['tc_sale'] = 0  # set the fixed component of the transaction cost to a seller (inspection/repair cost to make a car qualified to be resold)
+        mp['tc_sale_age'] = 0  # coefficient of age on the total sales costs
+        mp['ptc_sale'] = 0  # set the proportional component of the transaction cost to a seller (inspection/repair cost to make a car qualified to be resold)
+        mp['tc_sale_even'] = 0  # incremental sales transactions costs during inspection years (even years) necessary to pass inspection before car can be sold
 
-        mp['u_og'] = [0]
-        mp['u_even'] = [0]
+        # car utility parameters (see also trmodel.u_car) 
+        # Reduced form car utility mp.u_0{tp, car}+mp.u_a{tp, car}*car_age + mp.u_a_sq{tp, car}*car_age.^2
+        mp['u_0'] = [0]  # intercept in utility function (ntypes x ncartypes cell) 
+        mp['u_a'] = [0]  # slope coefficient on car-age in utility function (ntypes x ncartypes cell) 
+        mp['u_a_sq'] = [0]  # car age squared 
 
-        # tax policy parameters
-        mp['vat'] = 0
-        mp['cartax_lo'] = 0
-        mp['cartax_hi'] = 0
-        mp['tax_fuel'] = 0
-        mp['K_cartax_hi'] = 0
+        mp['convexutility'] = 0  # this is a switch, if 1 then mp.u_a_sq is forced to be positive via the transformation exp(mp.u_a_sq) in u_car
 
-        # ******************************************
-        # Prices before taxes
-        # ******************************************
-        mp['pnew_notax'] = [100]
-        mp['pscrap_notax'] = [0]
-        mp['p_fuel_notax'] = 5
+        mp['u_og'] = [0]  # utility of outside good  (ntypes x 1 cell) 
+        mp['u_even'] = [0]  # utility during even inspection years (expect to be a disutility or negative value due to the disutility of having car inspected)        
+
+        # tax policy parameters (must be before specification of prices of fuel and cars)
+        mp['vat'] = 0  # value added tax
+        mp['cartax_lo'] = 0  # registration tax (below kink, K_cartax_hi)
+        mp['cartax_hi'] = 0  # registration tax (above kink, K_cartax_hi)
+        mp['tax_fuel'] = 0  # proportional fuel tax 
+        mp['K_cartax_hi'] = 0  # mp.K_cartax_hi before mp.cartax_hi tax kicks in
 
         # ******************************************
-        # Parameters of reduced form driving equation
+        # Prices before taxes (prices after taxes are computed when solving the model)
+        # if car or consumer type parameters have size smaller than ncartypes and ntypes, the last element is repeated.
         # ******************************************
-        mp['fe'] = [20]
+        mp['pnew_notax'] = [100]  # new car prices (cartype specific)
+        mp['pscrap_notax'] = [0]  # scrap car prices (cartype specific)
+        mp['p_fuel_notax'] = 5  # price of fuel (DKK/liter) from average fuel price before tax
+        # mp['p_fuel'] = 10.504  # price of fuel (DKK/liter) from average fuel price in 2008 from our dataset
+
+        # ******************************************
+        # Parameters of reduced form driving equation 
+        # x = mp.db.pkm{tp}*pkm{car} + mp.db.car{car} + mp.db.tau{tp} + mp.db.a1{tp}*a + mp.db.a2{tp}*a.^2;
+        # ******************************************
+        # Reduced form driving equation coefficients are stored in db structure 
+        mp['fe'] = [20]  # car specific fuel efficiency (km/liter)
         mp['db'] = {
-            'specification': 'linear',
-            'pkm': [0],
-            'car': [0],
-            'tau': [0],
-            'a1': [0],
-            'a2': [0]
+            'specification': 'linear',  # 'linear' or 'log-log' 
+            'pkm': [0],  # coefficient on pkm; 
+            'car': [0],  # car type specific coefficient on car; 
+            'tau': [0],  # coefficient with car type fixed effect by consumer type            
+            'a1': [0],  # coefficient on a*1; 
+            'a2': [0]  # coefficient on a^2; 
         }
 
         # ******************************************
         # Reduced form or structural form
         # ******************************************
-        mp['modeltype'] = 'reducedform'
+        # Structural parameters can be identified from reduced form parameters for car demand and driving
+        # by using trmodel.update_structural_par to obtain "structural" utility parameters mp.sp. 
+        # Because of implicit dependence on type specific marginal utility of money, all these coefficients have to be consumer type specific
+        # coefficient with price per kilometer by consumer type
 
+        mp['modeltype'] = 'reducedform'
+        # if mp.modeltype == 'reducedform': reduced form parameters mp.u_0, mp.u_a, and mp.u_a_sq are used in trmodel.u_car. 
+        # if mp.modeltype == 'structuralform': structural parameters mp.sp, mp.mum are used in trmodel.u_car
+        # 
+        # If the model allows for driving, the reduced form parameters mp.u_0, mp.u_a, and mp.u_a_sq 
+        # are not policy invariant since they on fuel-prices (and marginal utility of money and other structural parameters)
+        # So to run counterfactuals where fuel prices are changed you need to set mp.modeltype = 'structuralform';
+        #
+        # Estimation strategy: 
+        #   First set mp.modeltype = 'reducedform' to estimate reduced form parameters during estimation. 
+        #   Then set mp.modeltype = 'structuralform' for running counter-factuals that changes fuel prices. 
+
+        # ********************************************************************************
         # update parameters
+        # ********************************************************************************
+        # update mp with mp0 (default values are overwritten by input values mp0)
         if mp0 is not None:
-            mp['db'].update(mp0.get('db', {}))
+            if 'db' in mp0:
+                mp['db'].update(mp0['db'])
             for key in mp0:
                 if key != 'db':
                     mp[key] = mp0[key]
@@ -114,7 +157,7 @@ class TrModel:
         # update endogenous parameters
         mp = TrModel.update_mp(mp)
         mp['p_fuel_notax'], mp['pnew_notax'], mp['pscrap_notax'] = TrModel.price_notax(mp)
-        
+
         return mp
 
     @staticmethod
@@ -126,29 +169,29 @@ class TrModel:
         # Update model dependent parameters when changing mp.ntypes or mp.ncartypes
         # if lists are smaller than mp.ntypes or mp.ncartypes the last element is repeated
 
-        mp['db']['car'] = TrModel.repcell(mp['db']['car'], 1, mp['ncartypes'])
-        mp['db']['pkm'] = TrModel.repcell(mp['db']['pkm'], mp['ntypes'], 1)
-        mp['db']['tau'] = TrModel.repcell(mp['db']['tau'], mp['ntypes'], 1)
-        mp['db']['a1'] = TrModel.repcell(mp['db']['a1'], mp['ntypes'], 1)
-        mp['db']['a2'] = TrModel.repcell(mp['db']['a2'], mp['ntypes'], 1)
+        mp['db']['car'] = TrModel.repcell(mp['db']['car'], mp['ncartypes'])
+        mp['db']['pkm'] = TrModel.repcell(mp['db']['pkm'], mp['ntypes'])
+        mp['db']['tau'] = TrModel.repcell(mp['db']['tau'], mp['ntypes'])
+        mp['db']['a1'] = TrModel.repcell(mp['db']['a1'], mp['ntypes'])
+        mp['db']['a2'] = TrModel.repcell(mp['db']['a2'], mp['ntypes'])
 
         # Car-specific parameters
         param_j = ['lbl_cartypes', 'abar_j0', 'acc_0', 'acc_a', 'acc_even', 'fe', 'pnew_notax', 'pscrap_notax']
         for param in param_j:
-            mp[param] = TrModel.repcell(mp[param], 1, mp['ncartypes'])
+            mp[param] = TrModel.repcell(mp[param],mp['ncartypes'])
 
         # Household type-specific parameters
         param_tau = ['lbl_types', 'mum', 'phi', 'u_og', 'psych_transcost', 'psych_transcost_nocar']
         for param in param_tau:
-            mp[param] = TrModel.repcell(mp[param], mp['ntypes'], 1)
+            mp[param] = TrModel.repcell(mp[param], mp['ntypes'])
 
         # Car-and-household specific parameters
         param_tau_j = ['u_0', 'u_a', 'u_a_sq', 'u_even']
         for param in param_tau_j:
-            mp[param] = TrModel.repcell(mp[param], mp['ntypes'], mp['ncartypes'])
+            mp[param] = TrModel.repcell(mp[param], mp['ntypes'])
 
         # The fundamental prices are p_fuel_notax, pnew_notax, plus the tax rates
-        mp['p_fuel'], mp['pnew'], mp['pscrap'] = TrModel.price_aftertax(mp)
+        mp['p_fuel'], mp['pnew'], mp['pscrap'] = TrModel.price_notax(mp)
 
         if mp['ntypes'] == 1:
             mp['tw'] = 1
@@ -158,11 +201,42 @@ class TrModel:
 
         return mp
     @staticmethod
-    def repcell(array, rows, cols):
-        # Replicate elements of an array
-        if not isinstance(array, list):
-            array = [array]
-        return (array * cols)[:cols]
+    def repcell(A, n, m=None):
+        """
+        Repeat elements of a list (or list of lists) to match the specified size.
+
+        Parameters:
+        A (list or list of lists): Input list or list of lists.
+        n (int): Number of rows for the output list.
+        m (int, optional): Number of columns for the output list. Defaults to None.
+
+        Returns:
+        list or list of lists: Output list or list of lists with repeated elements.
+        """
+        if m is None:
+            n1 = len(A)
+            if n1 > n:
+                return A[:n]
+            
+            B = [None] * n
+            B[:n1] = A
+            if n1 < n:
+                B[n1:n] = [A[-1]] * (n - n1)
+            return B
+        
+        else:
+            A = np.array(A, dtype=object)
+            n1, m1 = A.shape
+            B = np.empty((n, m), dtype=object)
+            B[:min(n1, n), :min(m1, m)] = A[:min(n1, n), :min(m1, m)]
+            
+            if m1 < m:
+                B[:, m1:m] = np.tile(B[:, m1-1:m1], (1, m - m1))
+            
+            if n1 < n:
+                B[n1:n, :] = np.tile(B[n1-1:n1, :], (n - n1, 1))
+            
+            return B.tolist()
 
     @staticmethod
     def price_notax(mp):
@@ -205,193 +279,90 @@ class TrModel:
         
         return pnew_notax
 
-    @staticmethod
-    def price_aftertax(mp):
-        # price_aftertax(): This function computes prices after taxes given before tax prices and tax rates in mp
-
-        p_fuel = mp['p_fuel_notax'] * (1 + mp['tax_fuel']) # scalar
-
-        pnew = [None] * mp['ncartypes']
-        pscrap = [None] * mp['ncartypes']
-        
-        for icar in range(mp['ncartypes']):
-            pnew_notax = TrModel.pcar_after_passthrough(mp['pnew_notax'][icar], mp, icar)
-
-            pnew[icar] = TrModel.pcar_aftertax(
-                pnew_notax, mp['K_cartax_hi'], mp['cartax_lo'], mp['cartax_hi'], mp['vat']
-            )
-
-            pscrap[icar] = mp['pscrap_notax'][icar] # currently, no special treatment 
-
-        return p_fuel, pnew, pscrap
-
-    @staticmethod
-    def pcar_aftertax(pcar_notax, K_cartax_hi, cartax_lo, cartax_hi, vat):
-        """
-        pcar_aftertax(): new car prices including all taxes.
-        """
-        assert cartax_lo <= cartax_hi, 'hi/low bracket rates reversed: this could be an error!'
-        assert vat <= 1.0, 'VAT should be in [0;1] (unless you are doing a crazy large counterfactual)'
-
-        if pcar_notax * 1.25 <= K_cartax_hi:
-            # no top-tax will be paid
-            pcar_incl_taxes = (1 + cartax_lo) * 1.25 * pcar_notax
-        else:
-            # price is in the top-bracket
-            pcar_incl_taxes = (1 + cartax_hi) * 1.25 * pcar_notax - (cartax_hi - cartax_lo) * K_cartax_hi
-
-        return pcar_incl_taxes
-
-    @staticmethod
-    def set_up_passthrough(mp_baseline, rate):
-        passthrough = {
-            'pnew_notax_baseline': mp_baseline['pnew_notax'],
-            'pnew_baseline': mp_baseline['pnew'],
-            'rate': rate,
-            'cartaxes_baseline': {
-                'K_cartax_hi': mp_baseline['K_cartax_hi'],
-                'cartax_lo': mp_baseline['cartax_lo'],
-                'cartax_hi': mp_baseline['cartax_hi'],
-                'vat': mp_baseline['vat']
-            }
-        }
-        return passthrough
-
-    @staticmethod
-    def pcar_after_passthrough(pcar_raw, mp, icar, DOPRINT=False):
-        """
-        pcar_after_passthrough(): adds a mechanical firm-response to the raw pre-tax price.
-        """
-        if 'passthrough' in mp:
-            assert 1 <= icar <= mp['ncartypes']
-            assert 'pnew_notax_baseline' in mp['passthrough']
-            assert 'rate' in mp['passthrough']
-
-            # 1. compute price that *would* have prevailed absent any changes in firm behavior 
-            pcar_at_full_passthrough = TrModel.pcar_aftertax(pcar_raw, mp['K_cartax_hi'], mp['cartax_lo'], mp['cartax_hi'], mp['vat'])
-            mp0 = mp['passthrough']['cartaxes_baseline']  # tax rates in the baseline
-            pcar_baseline_full_pasthrough = TrModel.pcar_aftertax(pcar_raw, mp0['K_cartax_hi'], mp0['cartax_lo'], mp0['cartax_hi'], mp0['vat'])
-            delta_tax = pcar_at_full_passthrough - pcar_baseline_full_pasthrough
-
-            # 2. change in manufacturer price
-            # NOTE: "-1" because manufacturers move *opposite* of the policy makers intended direction
-            delta_firm_price = (-1) * (1 - mp['passthrough']['rate']) * delta_tax
-
-            # 3. final price before taxes get applied
-            pcar = pcar_raw + delta_firm_price
-
-            if DOPRINT:
-                print(f'At full passthrough: p0 = {pcar_baseline_full_pasthrough:.2f} to p1 = {pcar_at_full_passthrough:.2f}: implied delta tax = {delta_tax:.2f}')
-                print(f'Requested passthrough = {mp["passthrough"]["rate"] * 100.0:.2f}% => delta p raw = {delta_firm_price:.2f}')
-                print(f'Final result: p0 = {pcar_raw:.2f} -> p with passthrough = {pcar:.2f}')
-        
-        else:
-            # nothing to do
-            pcar = pcar_raw
-        
-        return pcar       
-
 
     @staticmethod
     def index(mp, abar_j=None):
         """
-        This function sets up the state space for the trmodel.
+        Set up the state space for the TRModel.
 
-        SYNTAX: s = index(mp, abar_j)
+        Parameters:
+        mp (dict): Dictionary with model parameters.
+        abar_j (list, optional): List of max ages for each car type. If not provided, defaults to mp['abar_j0'].
 
-        INPUT:
-            mp: dict with model parameters (see trmodel.setparams)
-            abar_j: list with max age (forced scrap age) for each car j=1,..,mp['ncartypes']
-
-        OUTPUT:
-            s: dict with the following elements:
-               ... (description of fields in the output dict s)
+        Returns:
+        dict: A dictionary representing the state space with various indices and metadata.
         """
-
-        if abar_j is None:
-            abar_j = mp['abar_j0']
-        
         s = {}
-        s['abar_j'] = abar_j
+        if abar_j is None:
+            abar_j = [mp['abar_j0'][0]]
 
-        # Initialize state and decision indexes
-        s['id'] = {'keep': 1}
-        s['is'] = {'car': [], 'car_ex_clunker': [], 'clunker': []}
-        s['ip'] = []
+        s['abar_j'] = abar_j
+        # Initialize state and decision indices
         ei = 0
         eip = 0
-        for j in range(mp['ncartypes']):
-            # Indexes states and trade decisions (including new car)
+        s['is'] = {'car': [], 'car_ex_clunker': [], 'clunker': [], 'age': []}
+        s['id'] = {'trade': [], 'trade_used': [], 'trade_new': [], 'age': []}
+        s['ip'] = []
+
+        for j, max_age in enumerate(abar_j):
             si = ei + 1
-            ei = ei + s['abar_j'][j]
+            ei += max_age
 
-            # Car owner state
-            s['is']['car'].append(np.arange(si, ei + 1).tolist())
-            s['is']['car_ex_clunker'].append(np.arange(si, ei).tolist())
-            s['is']['clunker'].append(ei)
+            # car owner state
+            car_indices = list(range(si, ei + 1))
+            s['is']['car'].append(car_indices)
+            s['is']['car_ex_clunker'].append(car_indices[:-1])
+            s['is']['clunker'].append(car_indices[-1])
 
-            # Trade decision
-            s['id'].setdefault('trade', []).append(np.arange(si + 1, ei + 2).tolist())
-            s['id'].setdefault('trade_used', []).append(np.arange(si + 2, ei + 2).tolist())
-            s['id'].setdefault('trade_new', []).append([si + 1])
+            # trade decision
+            trade_indices = [i + 1 for i in car_indices]
+            s['id']['trade'].append(trade_indices)
+            s['id']['trade_used'].append(trade_indices[1:])
+            s['id']['trade_new'].append(trade_indices[0])
 
-            # Corresponding car age values
-            s['is'].setdefault('age', [])[si:ei + 1] = np.arange(1, s['abar_j'][j] + 1).tolist()
-            s['id'].setdefault('age', [])[si + 1:ei + 2] = np.arange(0, s['abar_j'][j]).tolist()
+            # corresponding car age values
+            s['is']['age'].extend(list(range(1, max_age + 1)))
 
-            # Indexes for used car prices and excess demand
+            # indexes for used car prices
             sip = eip + 1
-            eip = eip + s['abar_j'][j] - 1
-            s['ip'].append(np.arange(sip, eip + 1).tolist())
+            eip += max_age - 1
+            s['ip'].append(list(range(sip, eip + 1)))
 
-        s['ns'] = ei + 1  # number of states (add one for no car state)
-        s['nd'] = ei + 2  # number of decisions (add one for keep and purge)
-        s['np'] = eip  # number of prices
+        s['ns'] = ei + 1
+        s['nd'] = ei + 2
+        s['np'] = eip
+        s['is']['nocar'] = s['ns']
+        s['id']['purge'] = s['ns'] + 1
 
-        s['is']['nocar'] = s['ns']  # nocar state
-        s['id']['purge'] = s['ns'] + 1  # purge decision
+        s['is']['age'].append(np.nan)  # no car state age
+        s['id']['age'] = s['is']['age'] + [np.nan] * 2  # keep and purge decision ages
 
-        s['is'].setdefault('age', [])[s['is']['nocar']] = np.nan
-        s['id'].setdefault('age', [])[s['id']['keep']] = np.nan
-        s['id'].setdefault('age', [])[s['id']['purge']] = np.nan
+        # Transition indices
+        s['tr'] = {'choice': [], 'state': [i for sublist in s['is']['car'] for i in sublist] + [s['is']['nocar']],
+                   'next_acc': [np.nan] * s['ns'], 'next_keep': [np.nan] * s['ns'],
+                   'next_trade': [np.nan] * s['ns']}
 
-        # Indices for trade transition matrix
-        s['tr'] = {'choice': []}
-        for j in range(mp['ncartypes']):
-            s['tr']['choice'].extend(s['id']['trade'][j][1:] + s['id']['trade'][j][:1])
+        for idx, car in enumerate(s['is']['car']):
+            for c in car:
+                s['tr']['next_keep'][c - 1] = car[0] if c == car[-1] else c + 1
+                s['tr']['next_acc'][c - 1] = s['is']['clunker'][idx]
+
         s['tr']['choice'].append(s['id']['purge'])
-
-        # Index for all rows and columns in delta
-        s['tr']['state'] = sum(s['is']['car'], []) + [s['is']['nocar']]
-
-        # Index for next period car state
-        s['tr']['next_acc'] = [np.nan] * s['ns']
-        s['tr']['next_keep'] = np.array(s['tr']['state']) + 1
-        s['tr']['next_trade'] = np.array(s['tr']['state'])
-        for j in range(mp['ncartypes']):
-            s['tr']['next_acc'][s['is']['car'][j]] = s['is']['clunker'][j]
-            s['tr']['next_keep'][s['is']['clunker'][j]] = s['is']['car'][j][0]
-        s['tr']['next_keep'][s['is']['nocar']] = s['is']['nocar']
-        s['tr']['next_acc'][s['is']['nocar']] = s['is']['nocar']
-
-        # Age transition matrices conditional on accidents
-        s['Q'] = {}
-        s['Q']['no_acc'] = csr_matrix((np.ones(s['ns']), (s['tr']['state'], s['tr']['next_keep'])), shape=(s['ns'], s['ns']))
-        s['Q']['acc'] = csr_matrix((np.ones(s['ns']), (s['tr']['state'], s['tr']['next_acc'])), shape=(s['ns'], s['ns']))
-        s['dQ'] = s['Q']['acc'] - s['Q']['no_acc']
-        s['F'] = {}
-        s['F']['no_acc'] = csr_matrix((np.ones(s['ns']), (s['tr']['state'], s['tr']['state'])), shape=(s['ns'], s['ns']))
-        s['F']['acc'] = s['Q']['acc']
-        s['dF'] = s['F']['acc'] - s['F']['no_acc']
-
+        s['tr']['next_keep'][s['is']['nocar'] - 1] = s['is']['nocar']
+        s['tr']['next_acc'][s['is']['nocar'] - 1] = s['is']['nocar']
+        
+        
         # Indexes for post trade distribution (before aging)
         s['ipt'] = {'car': s['is']['car'], 'nocar': s['is']['nocar']}
         for j in range(mp['ncartypes']):
             s['ipt'].setdefault('new', []).append(s['ipt']['car'][j][0])
             s['ipt'].setdefault('used', []).append(s['ipt']['car'][j][1:])
         s['ipt']['age'] = np.array(s['is']['age']) - 1
-
+        
+          
+        
         return s
+
     @staticmethod
     def utility(mp, s, tau, price_vec):
         """
@@ -494,29 +465,28 @@ class TrModel:
         u_car: Function to compute the utility of having a car.
         """
         pkm = mp['p_fuel'] / mp['fe'][car] * 1000  # p_fuel is measured in 1000 DKK/l, mp.fe{j} is measured as km/l, but pkm was in DKK/km in regression
-
         if mp['modeltype'] == 'structuralform':
-            uv = (mp['sp']['alpha_0'][tau, car] +
-                  mp['sp']['alpha_a'][tau, car] * car_age +
-                  mp['sp']['alpha_a_sq'][tau, car] * car_age ** 2 -
+            uv = (mp['sp']['alpha_0'][tau][car] +
+                  mp['sp']['alpha_a'][tau][car] * car_age +
+                  mp['sp']['alpha_a_sq'][tau][car] * car_age ** 2 -
                   1 / (2 * mp['sp']['phi'][tau]) * 
-                  (np.maximum(0, mp['sp']['gamma_0'][tau, car] + mp['sp']['gamma_a'][tau] * car_age - pkm * mp['mum'][tau])) ** 2)
+                  (np.maximum(0, mp['sp']['gamma_0'][tau][car] + mp['sp']['gamma_a'][tau] * car_age - pkm * mp['mum'][tau])) ** 2)
         elif mp['modeltype'] == 'reducedform':
             if mp['convexutility']:
                 uv = (mp['u_0'][tau][car] +
                       mp['u_a'][tau][car] * car_age +
                       np.exp(mp['u_a_sq'][tau][car]) * car_age ** 2)
             else:
-                uv = (mp['u_0'][tau][car] +
-                      mp['u_a'][tau][car] * car_age +
-                      mp['u_a_sq'][tau][car] * car_age ** 2)
+                uv = (mp['u_0'][car] +
+                      mp['u_a'][car] * car_age +
+                      mp['u_a_sq'][car] * car_age ** 2)
         else:
             raise ValueError(f'Unexpected reduced form type, "{mp["modeltype"]}".')
 
         # add the (dis)utility from car inspections in even years 
         # (after the first inspection at age 4)
         inspection = (1 - car_age % 2) * (car_age >= 4)  # dummy for inspection year
-        uv += mp['u_even'][tau][car] * inspection
+        uv += mp['u_even'][car] * inspection
 
         return uv
     @staticmethod
@@ -605,7 +575,7 @@ class TrModel:
         # 2. compute gamma coefficients
         d0 = np.array(mp['db']['car']) + np.array(mp['db']['tau'])
         d1 = np.array(mp['db']['a1'])
-        sp['gamma_0'] = -d0 * sp['phi']
+        sp['gamma_0'] = (-1*d0) * sp['phi']
         sp['gamma_a'] = -d1 * sp['phi']
 
         # 3. compute alpha coefficients

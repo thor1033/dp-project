@@ -16,7 +16,7 @@ def main():
     params['lbl_cartypes'] = ['']
 
     # Initialize the model with parameters
-    model = TrModel(params)
+    model = TrModel.setparams()
     s = model.index()
 
     # Low transaction cost scenario
